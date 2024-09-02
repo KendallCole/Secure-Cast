@@ -24,8 +24,10 @@ local VoxelsUtility = require(Utility.Voxels)
 local PhysicsUtility = require(Utility.Physics)
 local SnapshotsUtility = require(Utility.Snapshots)
 local BenchmarkUtility = require(Utility.Benchmark)
+local BezierUtility = require(Utility.Bezier)
 
 ---- Settings ----
+local EPSILON = 0.001
 
 local IS_CLIENT = RunService:IsClient()
 local IS_SERVER = RunService:IsServer()
@@ -277,10 +279,22 @@ local function OnPreRender()
 	for _, Projectile in Projectiles do
 		--> Type casting for client projectiles
 		local PVInstance = Projectile.Instance
-		
 		local Time = (Projectile.Step + (Tick - Projectile.Tick))
-		local Position = PhysicsUtility.GetPositionAtTime(Projectile.Origin, Projectile.Velocity, Projectile.Gravity, Time)
-		local Orientation = CFrame.lookAt(Position, Position + PhysicsUtility.GetVelocity(Projectile.Velocity, Projectile.Gravity, Time))
+		
+		local Orientation
+		local Position
+		if Projectile.Extra.QuadBezier then
+			local a, b, c = table.unpack(Projectile.Extra.QuadBezier)
+				
+			local totalDistance: number = (a - c).Magnitude
+			local v = (Projectile.Speed * Time) / totalDistance
+			
+			Position = BezierUtility.QuadraticBezier(v + EPSILON , a, b, c)
+			Orientation = CFrame.lookAt(Position, Position + PhysicsUtility.GetVelocity(Projectile.Velocity, Projectile.Gravity, Time))
+		else
+			Position = PhysicsUtility.GetPositionAtTime(Projectile.Origin, Projectile.Velocity, Projectile.Gravity, Time)
+			Orientation = CFrame.lookAt(Position, Position + PhysicsUtility.GetVelocity(Projectile.Velocity, Projectile.Gravity, Time))
+		end
 
 		if PVInstance:IsA("BasePart") then
 			table.insert(Parts, PVInstance)
@@ -288,6 +302,7 @@ local function OnPreRender()
 		else
 			PVInstance:PivotTo(Orientation)
 		end
+
 	end
 
 	--> Apply
@@ -338,13 +353,34 @@ local function OnPostSimulation(deltaTime: number)
 		
 		--> Only simulate moving projectiles
 		if Projectile.Speed > 0 then
-			Position = PhysicsUtility.GetPositionAtTime(Projectile.Origin, Projectile.Velocity, Projectile.Gravity, Step)
-			
+			local Origin
+			local Direction
+			local RaycastResult
+			local RaycastPosition
+
+			if Projectile.Extra.QuadBezier then
+
+				local a, b, c = table.unpack(Projectile.Extra.QuadBezier)
+				
+				local totalDistance: number = (a - c).Magnitude
+				local v = (Projectile.Velocity.Magnitude * Time) / totalDistance
+				Position = BezierUtility.QuadraticBezier(v + EPSILON , a, b, c)
+	
+				Origin = Projectile.Position
+				Direction = (Position - Origin)
+
+				RaycastResult = workspace:Raycast(Origin, Direction, Projectile.RaycastFilter)
+				RaycastPosition = RaycastResult and RaycastResult.Position or (Origin + Direction * 2)
+				
+			else
+				Position = PhysicsUtility.GetPositionAtTime(Projectile.Origin, Projectile.Velocity, Projectile.Gravity, Step)
+				Origin = Projectile.Position
+				Direction = (Position - Origin)
+				RaycastResult = workspace:Raycast(Origin, Direction, Projectile.RaycastFilter)
+				RaycastPosition = RaycastResult and RaycastResult.Position or (Origin + Direction)
+			end
+						
 			--> Raycast against world
-			local Origin = Projectile.Position
-			local Direction = (Position - Origin)
-			local RaycastResult = workspace:Raycast(Origin, Direction, Projectile.RaycastFilter)
-			local RaycastPosition = RaycastResult and RaycastResult.Position or (Origin + Direction)
 
 			--> Perform server-sided player hit detection
 			local Intersection: Intersection?
